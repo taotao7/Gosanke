@@ -1,0 +1,27 @@
+:root {
+  font-family: 'IBM Plex Sans', 'Avenir Next', 'Segoe UI', sans-serif;
+  color: #f3f1ea;
+  background:
+    radial-gradient(circle at top, rgba(255, 185, 98, 0.28), transparent 34%),
+    linear-gradient(180deg, #121214 0%, #19181f 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 420px;
+  min-height: 260px;
+}
+
+button,
+textarea {
+  font: inherit;
+}
