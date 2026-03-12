@@ -5,7 +5,7 @@ export default defineConfig({
   manifest: {
     name: 'Gosanke Workspace',
     description: '同时向 Claude、ChatGPT、Gemini 分发提示词的浏览器扩展。',
-    permissions: ['storage', 'tabs', 'system.display', 'clipboardWrite'],
+    permissions: ['storage', 'tabs', 'system.display'],
     host_permissions: ['*://claude.ai/*', '*://chatgpt.com/*', '*://gemini.google.com/*'],
     action: {
       default_title: 'Gosanke Workspace',

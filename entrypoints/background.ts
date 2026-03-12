@@ -10,6 +10,8 @@ import {
   getDefaultLayoutRect,
   getSiteFromUrl,
   getWorkspaceLayout,
+  isRectOnScreen,
+  clampRectToDisplay,
   sanitizeWindowRects,
   sanitizeOrder,
   shallowEqualStatus,
@@ -22,6 +24,7 @@ import {
   type WorkspaceWindowKey,
   type WorkspaceWindowRects,
 } from '@/utils/workspace';
+import { t, loadLocale } from '@/utils/i18n';
 
 type PromptDispatchResult = {
   site: SiteKey;
@@ -35,6 +38,7 @@ let layoutBounds = getDefaultLayoutRect();
 let savedWindowRects: WorkspaceWindowRects = {};
 let initPromise: Promise<void> | null = null;
 let persistBoundsTimer: ReturnType<typeof setTimeout> | undefined;
+let isRaisingWindows = false;
 
 export default defineBackground(() => {
   void ensureInitialized();
@@ -76,15 +80,40 @@ export default defineBackground(() => {
   });
 
   browser.tabs.onRemoved.addListener((tabId) => {
+    const wasController = targets.controller?.tabId === tabId;
     clearTargetByTabId(tabId);
+    if (wasController) {
+      void closeAllSiteWindows();
+    }
   });
 
   browser.windows.onRemoved.addListener((windowId) => {
+    const wasController = targets.controller?.windowId === windowId;
     clearTargetByWindowId(windowId);
+    if (wasController) {
+      void closeAllSiteWindows();
+    } else {
+      // Check if the closed window was the controller by querying —
+      // targets may be empty after a service worker restart.
+      void checkAndCloseIfControllerGone();
+    }
   });
 
   browser.windows.onBoundsChanged.addListener((windowInfo) => {
     void handleWindowBoundsChanged(windowInfo);
+  });
+
+  browser.windows.onFocusChanged.addListener((windowId) => {
+    if (isRaisingWindows || windowId === browser.windows.WINDOW_ID_NONE) {
+      return;
+    }
+
+    // Check if the focused window belongs to our workspace
+    const allKeys = [...SITE_KEYS, 'controller'] as WorkspaceWindowKey[];
+    const isOurWindow = allKeys.some((key) => targets[key]?.windowId === windowId);
+    if (isOurWindow) {
+      void raiseAllWorkspaceWindows(windowId);
+    }
   });
 
   browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -103,6 +132,8 @@ export default defineBackground(() => {
 async function ensureInitialized() {
   if (!initPromise) {
     initPromise = (async () => {
+      await loadLocale();
+
       const stored = (await browser.storage.local.get([
         ORDER_STORAGE_KEY,
         LAYOUT_STORAGE_KEY,
@@ -210,35 +241,38 @@ async function openWorkspace(mode: 'restore' | 'arrange' | 'reorder') {
 }
 
 async function resolveWorkspaceLayout(mode: 'restore' | 'arrange' | 'reorder') {
+  // Always determine the target display from the focused window.
+  const targetDisplay = await getTargetDisplayWorkArea();
+
   if (mode === 'arrange') {
-    await refreshLayoutBoundsFromCurrentWindow();
+    layoutBounds = getDefaultLayoutRect(targetDisplay);
     savedWindowRects = getWorkspaceLayout(layoutBounds, snapshot.order);
     return savedWindowRects as Record<WorkspaceWindowKey, LayoutRect>;
   }
 
   if (mode === 'reorder') {
-    const currentBounds = getLayoutBoundsFromRects(savedWindowRects);
-    if (currentBounds) {
-      layoutBounds = currentBounds;
-    } else {
-      await refreshLayoutBoundsFromCurrentWindow();
-    }
-
+    layoutBounds = getDefaultLayoutRect(targetDisplay);
     savedWindowRects = getWorkspaceLayout(layoutBounds, snapshot.order);
     return savedWindowRects as Record<WorkspaceWindowKey, LayoutRect>;
   }
 
+  // Restore mode: prefer saved rects, but validate they are on-screen.
   if (hasCompleteSavedLayout(savedWindowRects)) {
+    const displays = await getAllDisplayWorkAreas();
+    const allOnScreen = Object.values(savedWindowRects).every(
+      (rect) => rect && isRectOnScreen(rect, displays),
+    );
+    if (allOnScreen) {
+      return savedWindowRects as Record<WorkspaceWindowKey, LayoutRect>;
+    }
+    // Saved layout is off-screen (display changed) — regenerate on the target display.
+    layoutBounds = getDefaultLayoutRect(targetDisplay);
+    savedWindowRects = getWorkspaceLayout(layoutBounds, snapshot.order);
     return savedWindowRects as Record<WorkspaceWindowKey, LayoutRect>;
   }
 
-  const savedBounds = getLayoutBoundsFromRects(savedWindowRects);
-  if (savedBounds) {
-    layoutBounds = savedBounds;
-  } else {
-    await refreshLayoutBoundsFromCurrentWindow();
-  }
-
+  // No complete saved layout — generate fresh on the target display.
+  layoutBounds = getDefaultLayoutRect(targetDisplay);
   const generatedLayout = getWorkspaceLayout(layoutBounds, snapshot.order);
   savedWindowRects = {
     ...generatedLayout,
@@ -250,63 +284,149 @@ async function resolveWorkspaceLayout(mode: 'restore' | 'arrange' | 'reorder') {
   };
 }
 
-async function refreshLayoutBoundsFromCurrentWindow() {
+async function getTargetDisplayWorkArea(): Promise<LayoutRect> {
   try {
     const focused = await browser.windows.getLastFocused();
-    const displayBounds = await getDisplayBoundsForWindow(focused);
-    if (displayBounds) {
-      layoutBounds = getDefaultLayoutRect(displayBounds);
-      return;
+    const displays = await getAllDisplayWorkAreas();
+
+    if (displays.length > 0) {
+      const centerX = (focused.left ?? 0) + Math.max(focused.width ?? 0, 1) / 2;
+      const centerY = (focused.top ?? 0) + Math.max(focused.height ?? 0, 1) / 2;
+
+      const match = displays.find(
+        (d) => centerX >= d.left && centerX < d.left + d.width && centerY >= d.top && centerY < d.top + d.height,
+      );
+      if (match) return match;
+
+      // Fallback to primary or first display
+      return displays[0];
     }
 
+    // No display API — use the focused window itself if it's large enough
     if ((focused.width ?? 0) >= 900 && (focused.height ?? 0) >= 700) {
-      layoutBounds = getDefaultLayoutRect({
-        left: focused.left,
-        top: focused.top,
-        width: focused.width,
-        height: focused.height,
-      });
+      return {
+        left: focused.left ?? 0,
+        top: focused.top ?? 0,
+        width: focused.width ?? 1720,
+        height: focused.height ?? 1180,
+      };
     }
   } catch {
-    layoutBounds = getDefaultLayoutRect(layoutBounds);
+    // Ignore
+  }
+
+  return layoutBounds;
+}
+
+async function getAllDisplayWorkAreas(): Promise<LayoutRect[]> {
+  try {
+    const displays = await browser.system.display.getInfo();
+    return displays
+      .filter((d) => d.isEnabled && d.workArea)
+      .map((d) => ({
+        left: d.workArea.left,
+        top: d.workArea.top,
+        width: d.workArea.width,
+        height: d.workArea.height,
+      }));
+  } catch {
+    return [];
   }
 }
 
-async function getDisplayBoundsForWindow(windowInfo: {
-  left?: number;
-  top?: number;
-  width?: number;
-  height?: number;
-}) {
+async function closeWindows(windowIds: number[]) {
+  for (const id of windowIds) {
+    try {
+      await browser.windows.remove(id);
+    } catch {
+      // Already closed.
+    }
+  }
+}
+
+/**
+ * Close all site popup windows by querying tabs with site URLs.
+ * Does not rely on in-memory targets — works even after service worker restart.
+ */
+async function closeAllSiteWindows() {
+  const windowIdsToClose = new Set<number>();
+
+  // Collect from in-memory targets first
+  for (const site of SITE_KEYS) {
+    const wid = targets[site]?.windowId;
+    if (wid != null) windowIdsToClose.add(wid);
+    delete targets[site];
+  }
+  delete targets.controller;
+
+  // Also query tabs by URL to catch windows missed after SW restart
+  for (const site of SITE_KEYS) {
+    try {
+      const tabs = await browser.tabs.query({ url: SITE_DEFINITIONS[site].urlPatterns });
+      for (const tab of tabs) {
+        if (tab.windowId != null) {
+          // Only close popup windows (not regular browser windows the user opened)
+          try {
+            const win = await browser.windows.get(tab.windowId);
+            if (win.type === 'popup') {
+              windowIdsToClose.add(tab.windowId);
+            }
+          } catch { /* already closed */ }
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  await closeWindows([...windowIdsToClose]);
+}
+
+/**
+ * After a window is closed, check if the controller still exists.
+ * If not, close all site windows. Handles cases where targets was lost
+ * due to service worker restart.
+ */
+async function checkAndCloseIfControllerGone() {
   try {
-    const displays = await browser.system.display.getInfo();
-    const activeDisplays = displays.filter((display) => display.isEnabled);
-    if (!activeDisplays.length) {
-      return undefined;
+    const controllerUrl = getControllerUrl();
+    const tabs = await browser.tabs.query({ url: controllerUrl });
+    if (tabs.length === 0) {
+      // Controller is gone — close all site windows
+      await closeAllSiteWindows();
+    }
+  } catch { /* ignore */ }
+}
+
+async function raiseAllWorkspaceWindows(activeWindowId: number) {
+  if (isRaisingWindows) return;
+  isRaisingWindows = true;
+
+  try {
+    // Collect all workspace window IDs except the one the user clicked
+    const allKeys = [...SITE_KEYS, 'controller'] as WorkspaceWindowKey[];
+    const otherWindowIds = allKeys
+      .map((key) => targets[key]?.windowId)
+      .filter((id): id is number => id != null && id !== activeWindowId);
+
+    // Briefly focus each other window to bring it to the foreground
+    for (const id of otherWindowIds) {
+      try {
+        await browser.windows.update(id, { focused: true });
+      } catch {
+        // Window may have been closed.
+      }
     }
 
-    const left = windowInfo.left ?? 0;
-    const top = windowInfo.top ?? 0;
-    const width = Math.max(windowInfo.width ?? 0, 1);
-    const height = Math.max(windowInfo.height ?? 0, 1);
-    const centerX = left + width / 2;
-    const centerY = top + height / 2;
-
-    const currentDisplay =
-      activeDisplays.find((display) => isPointInsideBounds(centerX, centerY, display.bounds)) ??
-      activeDisplays.find((display) => display.isPrimary) ??
-      activeDisplays[0];
-
-    return currentDisplay?.workArea
-      ? {
-          left: currentDisplay.workArea.left,
-          top: currentDisplay.workArea.top,
-          width: currentDisplay.workArea.width,
-          height: currentDisplay.workArea.height,
-        }
-      : undefined;
-  } catch {
-    return undefined;
+    // Re-focus the window the user actually clicked, so it stays on top
+    try {
+      await browser.windows.update(activeWindowId, { focused: true });
+    } catch {
+      // Window may have been closed.
+    }
+  } finally {
+    // Cooldown to prevent re-entry from the focus events we just caused
+    setTimeout(() => {
+      isRaisingWindows = false;
+    }, 600);
   }
 }
 
@@ -394,19 +514,6 @@ function hasCompleteSavedLayout(rects: WorkspaceWindowRects): rects is Record<Wo
       rects.chatgpt &&
       rects.gemini &&
       rects.controller,
-  );
-}
-
-function isPointInsideBounds(
-  x: number,
-  y: number,
-  bounds: { left: number; top: number; width: number; height: number },
-) {
-  return (
-    x >= bounds.left &&
-    x < bounds.left + bounds.width &&
-    y >= bounds.top &&
-    y < bounds.top + bounds.height
   );
 }
 
@@ -556,8 +663,11 @@ async function dispatchPrompt(prompt: string, attachments?: ImageAttachment[]) {
 
   await openWorkspace('restore');
 
+  // Unique ID so content scripts can deduplicate if a message arrives more than once
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
   const results = await Promise.all(
-    DEFAULT_ORDER.map((site) => sendPromptToSite(site, normalized, safeAttachments)),
+    DEFAULT_ORDER.map((site) => sendPromptToSite(site, normalized, safeAttachments, requestId)),
   );
 
   await broadcastSnapshot();
@@ -573,46 +683,44 @@ async function sendPromptToSite(
   site: SiteKey,
   prompt: string,
   attachments: ImageAttachment[],
+  requestId: string,
 ): Promise<PromptDispatchResult> {
   const layout = getWorkspaceLayout(layoutBounds, snapshot.order);
-  let reason = '页面尚未就绪';
 
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const target = await ensureSiteWindow(site, layout[site]);
-    if (!target?.tabId) {
-      await sleep(600);
-      continue;
-    }
+  // First, make sure the window exists. Retry window creation only (not the message).
+  let target: WindowTarget | undefined;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    target = await ensureSiteWindow(site, layout[site]);
+    if (target?.tabId) break;
+    await sleep(800);
+  }
 
-    try {
-      const response = (await browser.tabs.sendMessage(target.tabId, {
+  if (!target?.tabId) {
+    return { site, ok: false, reason: t('bg.pageNotReady') };
+  }
+
+  // Send the message exactly ONCE. No retry after delivery — retrying causes duplicates.
+  try {
+    const response = (await browser.tabs.sendMessage(
+      target.tabId,
+      {
         type: 'site/submit-prompt',
+        requestId,
         prompt,
         attachments,
         site,
-      })) as { ok?: boolean; reason?: string } | undefined;
+      },
+      { frameId: 0 },
+    )) as { ok?: boolean; reason?: string } | undefined;
 
-      if (response?.ok) {
-        return {
-          site,
-          ok: true,
-          reason: '已发送',
-        };
-      }
-
-      reason = response?.reason ?? reason;
-    } catch {
-      reason = '页面连接失败';
-    }
-
-    await sleep(attempt === 0 ? 1200 : 700);
+    return {
+      site,
+      ok: Boolean(response?.ok),
+      reason: response?.ok ? t('bg.sent') : (response?.reason ?? t('bg.unknownError')),
+    };
+  } catch {
+    return { site, ok: false, reason: t('bg.connectionFailed') };
   }
-
-  return {
-    site,
-    ok: false,
-    reason,
-  };
 }
 
 async function forwardMessage(text: string, targetSite: SiteKey) {
@@ -623,7 +731,8 @@ async function forwardMessage(text: string, targetSite: SiteKey) {
     return { ok: false, reason: 'Invalid forward request' };
   }
 
-  const result = await sendPromptToSite(targetSite, normalized, []);
+  const requestId = `fwd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const result = await sendPromptToSite(targetSite, normalized, [], requestId);
   await broadcastSnapshot();
   return result;
 }

@@ -1,9 +1,9 @@
 :root {
-  font-family: 'IBM Plex Sans', 'Avenir Next', 'Segoe UI', sans-serif;
-  color: #f3f1ea;
+  font-family: 'Inter', 'SF Pro Text', -apple-system, 'Segoe UI', sans-serif;
+  color: #f0ece4;
   background:
-    radial-gradient(circle at top, rgba(255, 185, 98, 0.28), transparent 34%),
-    linear-gradient(180deg, #121214 0%, #19181f 100%);
+    radial-gradient(ellipse at 50% -5%, rgba(255, 185, 80, 0.18), transparent 50%),
+    linear-gradient(180deg, #131215 0%, #18171e 100%);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;

@@ -15,6 +15,9 @@ export interface SiteDefinition {
   uploadInputSelectors: string[];
   attachButtonSelectors: string[];
   attachTextHints: string[];
+  /** Hidden buttons that trigger a file input when clicked (bypass visibility check). */
+  hiddenUploadTriggerSelectors: string[];
+  removeAttachmentSelectors: string[];
   outputSelectors: string[];
   messageSelectors: string[];
   loginSelectors: string[];
@@ -80,21 +83,37 @@ export const SITE_DEFINITIONS: Record<SiteKey, SiteDefinition> = {
     urlPatterns: ['*://claude.ai/*'],
     inputSelectors: [
       'div.ProseMirror[contenteditable="true"]',
-      'form [contenteditable="true"][data-placeholder]',
       'fieldset [contenteditable="true"]',
+      'form [contenteditable="true"][data-placeholder]',
+      '[contenteditable="true"].is-editor-empty',
+      'fieldset div[contenteditable="true"]',
     ],
     sendSelectors: [
       'button[aria-label*="Send"]',
+      'button[aria-label*="send"]',
       'button[data-testid="send-button"]',
       'form button[type="submit"]',
+      'fieldset button[aria-label*="Send"]',
     ],
-    uploadInputSelectors: ['input[type="file"]'],
+    uploadInputSelectors: [
+      'input[type="file"][accept*="image"]',
+      'input[type="file"]',
+    ],
     attachButtonSelectors: [
       'button[aria-label*="Attach"]',
+      'button[aria-label*="attach"]',
       'button[aria-label*="Upload"]',
       'button[title*="Attach"]',
+      'button[data-testid*="attach"]',
+      'button[data-testid*="upload"]',
     ],
-    attachTextHints: ['attach', 'upload', 'file', 'image'],
+    attachTextHints: ['attach', 'upload', 'file', 'image', 'add content'],
+    hiddenUploadTriggerSelectors: [],
+    removeAttachmentSelectors: [
+      'button[aria-label*="Remove"]',
+      'button[aria-label*="remove"]',
+      'button[aria-label*="Delete"]',
+    ],
     outputSelectors: [
       '[data-testid="chat-message"]',
       'div[data-is-streaming]',
@@ -124,14 +143,24 @@ export const SITE_DEFINITIONS: Record<SiteKey, SiteDefinition> = {
       'button[aria-label*="Send"]',
       'form button[type="submit"]',
     ],
-    uploadInputSelectors: ['input[type="file"]'],
+    uploadInputSelectors: [
+      'input[type="file"][accept*="image"]',
+      'input[type="file"]',
+    ],
     attachButtonSelectors: [
       'button[aria-label*="Attach"]',
+      'button[aria-label*="attach"]',
       'button[aria-label*="Add photos"]',
       'button[data-testid="composer-plus-button"]',
-      'button[aria-haspopup="menu"]',
+      'button[data-testid*="attach"]',
     ],
     attachTextHints: ['attach', 'upload', 'photo', 'image', 'file'],
+    hiddenUploadTriggerSelectors: [],
+    removeAttachmentSelectors: [
+      'button[aria-label*="Remove"]',
+      'button[aria-label*="remove"]',
+      'button[data-testid*="remove"]',
+    ],
     outputSelectors: [
       '[data-testid^="conversation-turn-"]',
       '[data-message-author-role="assistant"]',
@@ -150,25 +179,53 @@ export const SITE_DEFINITIONS: Record<SiteKey, SiteDefinition> = {
     url: 'https://gemini.google.com/app',
     urlPatterns: ['*://gemini.google.com/*'],
     inputSelectors: [
+      'rich-textarea div.ql-editor[contenteditable="true"]',
       'rich-textarea [contenteditable="true"]',
       'div.ql-editor[contenteditable="true"]',
+      '.text-input-field [contenteditable="true"]',
+      '.text-input-field_textarea-wrapper [contenteditable="true"]',
       'textarea[aria-label*="prompt"]',
+      'textarea[placeholder]',
       'main [contenteditable="true"]',
     ],
     sendSelectors: [
       'button[aria-label*="Send message"]',
+      'button[aria-label*="Send"]',
       'button[aria-label*="Submit"]',
       'button[mattooltip*="Send"]',
       'button.send-button',
+      '.send-button-container button',
+      'input-area-v2 button[aria-label*="Send"]',
     ],
-    uploadInputSelectors: ['input[type="file"]'],
+    uploadInputSelectors: [
+      'input[type="file"][accept*="image"]',
+      'input[type="file"]',
+    ],
     attachButtonSelectors: [
       'button[aria-label*="Upload"]',
+      'button[aria-label*="upload"]',
       'button[aria-label*="Insert"]',
+      'button[aria-label*="Add image"]',
+      'button[aria-label*="add image"]',
       'button[mattooltip*="Upload"]',
       'button[title*="Upload"]',
     ],
-    attachTextHints: ['upload', 'insert', 'image', 'file', '图片'],
+    attachTextHints: ['upload', 'insert', 'image', 'file', 'add image'],
+    hiddenUploadTriggerSelectors: [
+      'button.hidden-local-file-image-selector-button',
+      'button.hidden-local-upload-button',
+      'button[xapfileselectortrigger]',
+    ],
+    removeAttachmentSelectors: [
+      'button[aria-label*="Remove"]',
+      'button[aria-label*="remove"]',
+      'button[aria-label*="Cancel"]',
+      'button[aria-label*="cancel"]',
+      'button[aria-label*="Close"]',
+      'input-area-v2 button[aria-label*="Remove"]',
+      '.input-chip button',
+      '.attachment-chip button',
+    ],
     outputSelectors: [
       'message-content',
       '.model-response-text',
@@ -299,8 +356,8 @@ export function getWorkspaceLayout(
   const gap = clamp(Math.round(shortestSide * 0.008), 4, 16);
 
   // Controller scales with resolution — must stay comfortably usable
-  const controllerWidth = clamp(Math.round(bounds.width * 0.38), 520, 860);
-  const controllerHeight = clamp(Math.round(bounds.height * 0.4), 380, 580);
+  const controllerWidth = clamp(Math.round(bounds.width * 0.45), 640, 1080);
+  const controllerHeight = clamp(Math.round(bounds.height * 0.48), 480, 720);
 
   const innerWidth = bounds.width - padding * 2;
   const innerHeight = bounds.height - padding * 2;
@@ -345,6 +402,38 @@ export function getWorkspaceLayout(
   };
 
   return rects;
+}
+
+export function isRectOnScreen(
+  rect: LayoutRect,
+  displays: Array<{ left: number; top: number; width: number; height: number }>,
+): boolean {
+  if (displays.length === 0) return true;
+
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+
+  return displays.some(
+    (d) =>
+      centerX >= d.left &&
+      centerX < d.left + d.width &&
+      centerY >= d.top &&
+      centerY < d.top + d.height,
+  );
+}
+
+export function clampRectToDisplay(
+  rect: LayoutRect,
+  display: { left: number; top: number; width: number; height: number },
+): LayoutRect {
+  const maxLeft = display.left + display.width - rect.width;
+  const maxTop = display.top + display.height - rect.height;
+  return {
+    left: Math.round(Math.max(display.left, Math.min(rect.left, maxLeft))),
+    top: Math.round(Math.max(display.top, Math.min(rect.top, maxTop))),
+    width: Math.min(rect.width, display.width),
+    height: Math.min(rect.height, display.height),
+  };
 }
 
 export function shallowEqualStatus(a: SiteStatus, b: SiteStatus) {

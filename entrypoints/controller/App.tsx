@@ -12,7 +12,7 @@ import {
   type SiteKey,
   type WorkspaceSnapshot,
 } from '@/utils/workspace';
-import { t } from '@/utils/i18n';
+import { t, loadLocale } from '@/utils/i18n';
 
 const SLOT_LABELS = () => [t('slot.topLeft'), t('slot.topRight'), t('slot.bottom')];
 
@@ -25,9 +25,13 @@ function App() {
   const [isSending, setIsSending] = useState(false);
   const [sendReport, setSendReport] = useState('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const sendingRef = useRef(false);
 
   useEffect(() => {
     let mounted = true;
+    void loadLocale().then(() => {
+      if (mounted) setSnapshot((s) => ({ ...s }));
+    });
 
     const handleMessage = (message: { type?: string; snapshot?: WorkspaceSnapshot }) => {
       if (message?.type === 'workspace/snapshot' && message.snapshot && mounted) {
@@ -44,9 +48,7 @@ function App() {
           setSnapshot(nextSnapshot as WorkspaceSnapshot);
         }
       })
-      .catch(() => {
-        // Ignore startup races while the background is waking up.
-      });
+      .catch(() => {});
 
     return () => {
       mounted = false;
@@ -148,26 +150,23 @@ function App() {
 
   const handleSend = async () => {
     const normalized = prompt.trim();
-    if ((!normalized && attachments.length === 0) || isSending) {
+    if ((!normalized && attachments.length === 0) || sendingRef.current) {
       return;
     }
 
+    // Use ref for synchronous guard — React state updates are async and
+    // cannot prevent double-calls from near-simultaneous events.
+    sendingRef.current = true;
     setIsSending(true);
     setSendReport(
       attachments.length > 0 ? t('report.dispatchingWithImages') : t('report.dispatching'),
     );
-
-    let useClipboard = false;
-    if (attachments.length > 0) {
-      useClipboard = await writeFirstImageToClipboard(attachments[0]);
-    }
 
     try {
       const response = (await browser.runtime.sendMessage({
         type: 'workspace/send-prompt',
         prompt: normalized,
         attachments,
-        useClipboard,
       })) as
         | {
             ok: boolean;
@@ -189,16 +188,18 @@ function App() {
           .join(' / ') ?? t('report.noResult');
 
       setSendReport(report);
-      if (response?.ok) {
-        setPrompt('');
-        setAttachments([]);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
+
+      // Always clear the composer after dispatching — the user should not need to
+      // manually clear stale content before composing the next message.
+      setPrompt('');
+      setAttachments([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
     } catch {
       setSendReport(t('report.sendFailed'));
     } finally {
+      sendingRef.current = false;
       setIsSending(false);
     }
   };
@@ -208,7 +209,7 @@ function App() {
       <section className="workspace-panel">
         <header className="workspace-header">
           <div>
-            <h1 className="workspace-title">Gosanke Workspace</h1>
+            <h1 className="workspace-title">{t('workspace.title')}</h1>
             <p className="workspace-note">{t('workspace.note')}</p>
           </div>
           <div className="workspace-actions">
@@ -218,7 +219,7 @@ function App() {
           </div>
         </header>
 
-        <section className="slot-grid" aria-label="窗口排布">
+        <section className="slot-grid" aria-label={t('workspace.slotGrid')}>
           {order.map((site, slotIndex) => {
             const status = snapshot.statuses[site];
             const tone = getStatusTone(status);
@@ -326,7 +327,7 @@ function App() {
               {allIdle ? t('composer.idleHint') : t('composer.activeHint')}
             </span>
             <button
-              className="workspace-button"
+              className="workspace-button workspace-button--send"
               type="button"
               disabled={isSending || !canSend}
               onClick={handleSend}>
@@ -336,7 +337,7 @@ function App() {
           <div className="send-report">{sendReport}</div>
         </section>
 
-        <section className="status-strip" aria-label="站点状态">
+        <section className="status-strip" aria-label={t('workspace.statusStrip')}>
           {DEFAULT_ORDER.map((site) => {
             const status = snapshot.statuses[site];
             return (
@@ -357,16 +358,6 @@ function App() {
       </section>
     </main>
   );
-}
-
-async function writeFirstImageToClipboard(attachment: ImageAttachment): Promise<boolean> {
-  try {
-    const blob = new Blob([Uint8Array.from(attachment.bytes)], { type: attachment.type });
-    await navigator.clipboard.write([new ClipboardItem({ [attachment.type]: blob })]);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function toImageAttachment(file: File): Promise<ImageAttachment> {
