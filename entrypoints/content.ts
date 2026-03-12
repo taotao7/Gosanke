@@ -883,6 +883,12 @@ function injectForwardButtons(currentSite: SiteKey, definition: SiteDefinition) 
         continue;
       }
 
+      // Skip if a descendant already has forward buttons (a more specific selector already matched)
+      if (msg.querySelector(`[${FORWARD_MARKER}]`)) {
+        msg.setAttribute(FORWARD_MARKER, '');
+        continue;
+      }
+
       const text = (msg.innerText ?? '').trim();
       if (text.length < 4) continue;
 
