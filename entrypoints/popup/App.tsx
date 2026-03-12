@@ -70,7 +70,7 @@ function App() {
       <section className="popup-card">
         <div className="popup-header">
           <div>
-            <p className="popup-kicker">Gosanke</p>
+            <p className="popup-kicker">Gosanke <span className="popup-version">v{browser.runtime.getManifest().version}</span></p>
             <h1 className="popup-title">{t('popup.subtitle')}</h1>
           </div>
           <div className="popup-header-actions">

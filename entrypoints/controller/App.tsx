@@ -209,7 +209,7 @@ function App() {
       <section className="workspace-panel">
         <header className="workspace-header">
           <div>
-            <h1 className="workspace-title">{t('workspace.title')}</h1>
+            <h1 className="workspace-title">{t('workspace.title')} <span className="workspace-version">v{browser.runtime.getManifest().version}</span></h1>
             <p className="workspace-note">{t('workspace.note')}</p>
           </div>
           <div className="workspace-actions">

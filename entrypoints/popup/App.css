@@ -45,6 +45,11 @@
   text-transform: uppercase;
 }
 
+.popup-version {
+  font-weight: 400;
+  opacity: 0.5;
+}
+
 .popup-title {
   margin: 4px 0 0;
   font-size: 20px;
