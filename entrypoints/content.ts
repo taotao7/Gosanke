@@ -135,18 +135,18 @@ function detectStatus(site: SiteKey, definition: SiteDefinition): SiteStatus {
 
   if (input) {
     status.state = 'ready';
-    status.note = hasOutput ? '已检测到聊天输入框与回复内容' : '输入框已就绪，等待发送';
+    status.note = hasOutput ? t('status.inputAndOutput') : t('status.inputReady');
     return status;
   }
 
   if (loginRequired) {
     status.state = 'login_required';
-    status.note = '页面存在登录入口，需先完成登录';
+    status.note = t('status.loginNeeded');
     return status;
   }
 
   status.state = 'loading';
-  status.note = document.readyState === 'complete' ? '等待聊天输入框出现' : '页面仍在加载';
+  status.note = document.readyState === 'complete' ? t('status.waitingInput') : t('status.pageLoading');
   return status;
 }
 
@@ -159,12 +159,12 @@ async function submitPrompt(
   const imageAttachments = attachments.filter(isImageAttachment);
 
   if (!normalizedPrompt && imageAttachments.length === 0) {
-    return { ok: false, reason: '输入内容和图片都为空' };
+    return { ok: false, reason: t('submit.emptyContent') };
   }
 
   const input = findVisibleEditable(definition.inputSelectors);
   if (!input) {
-    return { ok: false, reason: '输入框未找到，可能尚未登录' };
+    return { ok: false, reason: t('submit.noInput') };
   }
 
   if (imageAttachments.length > 0) {
@@ -177,7 +177,7 @@ async function submitPrompt(
   if (normalizedPrompt) {
     const inserted = writePrompt(input, normalizedPrompt);
     if (!inserted) {
-      return { ok: false, reason: '无法写入输入框' };
+      return { ok: false, reason: t('submit.writeFailed') };
     }
   }
 
@@ -204,13 +204,13 @@ async function uploadImages(
   // Strategy 2: File input injection (reliable fallback)
   const uploadInput = await ensureUploadInput(definition);
   if (!uploadInput) {
-    return { ok: false, reason: '未找到图片上传入口' };
+    return { ok: false, reason: t('submit.noUpload') };
   }
 
   const acceptedFiles = uploadInput.multiple ? files : files.slice(0, 1);
   const applied = setFilesOnInput(uploadInput, acceptedFiles);
   if (!applied) {
-    return { ok: false, reason: '无法把图片写入上传控件' };
+    return { ok: false, reason: t('submit.uploadFailed') };
   }
 
   await sleep(700);
@@ -238,7 +238,7 @@ async function waitAndSubmit(
   const submittedWithEnter = pressEnter(input);
   return submittedWithEnter
     ? { ok: true }
-    : { ok: false, reason: '发送按钮未就绪，请检查页面状态' };
+    : { ok: false, reason: t('submit.sendNotReady') };
 }
 
 function pasteImageViaEvent(input: HTMLElement, files: File[]): boolean {
@@ -617,7 +617,7 @@ async function handleForwardClick(btn: HTMLElement, msgElement: HTMLElement, tar
 
   btn.setAttribute('data-sending', 'true');
   const originalText = btn.textContent ?? '';
-  btn.textContent = '发送中...';
+  btn.textContent = t('forward.sending');
 
   try {
     const response = (await browser.runtime.sendMessage({
@@ -626,13 +626,13 @@ async function handleForwardClick(btn: HTMLElement, msgElement: HTMLElement, tar
       targetSite,
     })) as { ok?: boolean; reason?: string } | undefined;
 
-    btn.textContent = response?.ok ? '已发送' : `失败`;
+    btn.textContent = response?.ok ? t('forward.sent') : t('forward.failed');
     window.setTimeout(() => {
       btn.textContent = originalText;
       btn.removeAttribute('data-sending');
     }, 2000);
   } catch {
-    btn.textContent = '失败';
+    btn.textContent = t('forward.failed');
     window.setTimeout(() => {
       btn.textContent = originalText;
       btn.removeAttribute('data-sending');

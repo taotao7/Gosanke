@@ -1,33 +1,91 @@
 # Gosanke Workspace
 
-一个基于 WXT + React 的浏览器扩展，用来同时把同一条提示词发送到：
+<p align="center">
+  <img src="public/icon/128.png" alt="Gosanke" width="96" />
+</p>
 
-- `https://claude.ai`
-- `https://chatgpt.com`
-- `https://gemini.google.com`
+<p align="center">
+  A browser extension that sends the same prompt to Claude, ChatGPT, and Gemini simultaneously.
+</p>
 
-由于这些站点通常禁止被 `iframe` 嵌入，扩展采用的是 `3 个站点独立窗口 + 1 个中控浮窗` 的工作方式。
+<p align="center">
+  <a href="docs/README_zh.md">中文文档</a>
+</p>
 
-## 功能
+## What is Gosanke?
 
-- 中控输入框一次发送到三个站点
-- 支持附带图片一起发送到三个站点
-- 检测各站输入框是否存在，并显示登录/加载状态
-- 拖拽调整 Claude / ChatGPT / Gemini 的窗口摆放顺序
-- 按上二下一的布局自动整理三个站点窗口
-- 根据当前显示器的可用工作区动态计算窗口大小
+Gosanke opens **Claude**, **ChatGPT**, and **Gemini** in three separate popup windows, with a floating **controller** window for unified input. Since these sites block `iframe` embedding, the multi-window approach is the only viable option.
 
-## 开发
+## Features
+
+### Multi-Site Dispatch
+- Send the same text prompt to all three AI sites at once
+- Attach images — they are delivered to every site alongside the text
+- Paste screenshots directly into the controller (Ctrl/Cmd+V)
+
+### Smart Image Upload
+- Synthetic paste event injection (preferred, matches native UX)
+- Automatic fallback to file input injection when paste isn't supported
+- Per-site upload strategy adapts to each platform's DOM
+
+### Message Forwarding
+- Hover over any message on Claude / ChatGPT / Gemini to see forward buttons
+- One click forwards that message to either of the other two platforms
+- Visual feedback: sending → sent / failed
+
+### Adaptive Layout
+- Automatic window sizing based on screen resolution
+- Smaller screens use tighter spacing to maximize site window area
+- Larger screens get comfortable padding with proportional controller size
+- Two-top, one-bottom layout with the controller floating at the center
+- Drag-and-drop slot reordering in the controller
+- Manual "Rearrange" resets layout to the template
+- Window positions are saved and restored across sessions
+
+### Status Detection
+- Real-time detection of login state, input availability, and assistant output
+- Status broadcast to both the popup launcher and the controller
+- Heartbeat + MutationObserver for reliable state tracking
+
+### Internationalization
+- English and Chinese (auto-detected from browser language)
+- All UI strings, status messages, and error messages are localized
+
+## Architecture
+
+| Window | Role |
+|--------|------|
+| **Popup** | Toolbar launcher — shows status overview, opens the workspace |
+| **Controller** | Floating command center — unified input, drag-to-reorder, image attach |
+| **Claude / ChatGPT / Gemini** | Three independent popup windows with injected content scripts |
+
+Communication flows through the background service worker via `browser.runtime.sendMessage`.
+
+## Development
 
 ```bash
 bun install
 bun run dev
 ```
 
-## 构建
+## Build
 
 ```bash
 bun run build
 ```
 
-构建产物位于 `.output/chrome-mv3/`，可以在 Chrome 的扩展管理页使用“加载已解压的扩展程序”进行测试。
+The build output is in `.output/chrome-mv3/`. Load it in Chrome via **Manage Extensions → Load unpacked**.
+
+## Permissions
+
+| Permission | Why |
+|------------|-----|
+| `storage` | Save window layout, order, and rects across sessions |
+| `tabs` | Create, query, and manage site popup windows |
+| `system.display` | Read monitor work area for adaptive layout |
+| `clipboardWrite` | Write images to clipboard before dispatch |
+| Host permissions | Inject content scripts into Claude, ChatGPT, and Gemini |
+
+## License
+
+Private project.

@@ -620,7 +620,7 @@ async function forwardMessage(text: string, targetSite: SiteKey) {
 
   const normalized = text.trim();
   if (!normalized || !SITE_KEYS.includes(targetSite)) {
-    return { ok: false, reason: '无效的转发请求' };
+    return { ok: false, reason: 'Invalid forward request' };
   }
 
   const result = await sendPromptToSite(targetSite, normalized, []);
